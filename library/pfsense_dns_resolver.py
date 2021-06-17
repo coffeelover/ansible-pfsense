@@ -92,6 +92,70 @@ options:
     description: Register connected OpenVPN clients in the DNS Resolver
     required: false
     type: bool
+  hosts:
+    description: Dict of host overrides
+    type: list
+    elements: dict
+    suboptions:
+      host:
+        description: Hostname
+        required: true
+        type: str
+      domain:
+        description: Domain Name
+        required: true
+        type: str
+      ip:
+        description: IP Address
+        required: true
+        type: str
+      descr:
+        description: Description of Host
+        required: false
+        type: str
+      aliases:
+        description: List of dicts of additional hostnames
+        required: false
+        type: list
+        elements: dict
+        suboptions:
+          host:
+            description: Hostname
+            required: true
+            type: str
+          domain:
+            description: Domain Name
+            required: true
+            type: str
+          descr:
+            description: Description of Host
+            required: false
+            type: str
+  domainoverrides:
+    description: Dict of domain overrides
+    type: list
+    elements: dict
+    suboptions:
+      domain:
+        description: Domain Name
+        required: true
+        type: str
+      ip:
+        description: IP Address of Nameserver
+        required: true
+        type: str
+      forward_tls_upstream:
+        description: Use SSL/TLS for DNS Queries forwarded to this server
+        required: false
+        type: str
+      tls_hostname:
+        description: An optional TLS hostname used to verify the server certificate when performing TLS Queries.
+        required: false
+        type: str
+      descr:
+        description: Description of Domain
+        required: false
+        type: str
 """
 
 EXAMPLES = """
@@ -110,9 +174,33 @@ commands:
 """
 
 import re
+import sys
 from copy import deepcopy
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.network.pfsense.module_base import PFSenseModuleBase
+
+DNS_RESOLVER_HOSTS_ALIASES_ARGUMENT_SPEC = dict(
+    host=dict(required=True, type='str'),
+    domain=dict(required=True, type='str'),
+    descr=dict(required=False, type='str'),
+)
+
+DNS_RESOLVER_HOSTS_ARGUMENT_SPEC = dict(
+    host=dict(required=True, type='str'),
+    domain=dict(required=True, type='str'),
+    ip=dict(required=True, type='str'),
+    descr=dict(required=False, type='str'),
+    aliases=dict(required=False, type='list', elements='dict', 
+      options=DNS_RESOLVER_HOSTS_ALIASES_ARGUMENT_SPEC),
+)
+
+DNS_RESOLVER_DOMAINOVERRIDES_ARGUMENT_SPEC = dict(
+    domain=dict(required=True, type='str'),
+    ip=dict(required=True, type='str'),
+    descr=dict(required=False, type='str'),
+    tls_hostname=dict(required=False, type='str'),
+    forward_tls_upstream=dict(required=False, type='bool'),
+)
 
 DNS_RESOLVER_ARGUMENT_SPEC = dict(
     enable=dict(required=False, type='bool'),
@@ -141,7 +229,15 @@ DNS_RESOLVER_ARGUMENT_SPEC = dict(
     regdhcp=dict(required=False, type='bool'),
     regdhcpstatic=dict(required=False, type='bool'),
     regovpnclients=dict(required=False, type='bool'),
-
+    custom_options=dict(required=False, type='str'),
+    hosts=dict(
+      required=False, type='list', elements='dict',
+      options=DNS_RESOLVER_HOSTS_ARGUMENT_SPEC,
+    ),
+    domainoverrides=dict(
+      required=False, type='list', elements='dict',
+      options=DNS_RESOLVER_DOMAINOVERRIDES_ARGUMENT_SPEC,
+    )
 )
 
 
@@ -194,8 +290,57 @@ class PFSenseDNSResolverModule(PFSenseModuleBase):
                 elif value is False and param in target:
                     del target[param]
 
+        def _set_param_list(target, param):
+            if params.get(param) is not None:
+              if param == 'domainoverrides':
+                domainoverrides = []
+                for entry in params.get(param):
+                  domainoverride = dict()
+                  for subparam in DNS_RESOLVER_DOMAINOVERRIDES_ARGUMENT_SPEC:
+                    if entry.get(subparam) is not None:
+                      if DNS_RESOLVER_DOMAINOVERRIDES_ARGUMENT_SPEC[subparam]['type'] == 'bool':
+                        value = entry.get(subparam)
+                        if value is True:
+                          domainoverride[subparam] = ''
+                      else:
+                        if isinstance(entry[subparam], str):
+                          domainoverride[subparam] = entry[subparam]
+                        else:
+                          domainoverride[subparam] = str(entry[subparam])
+                  domainoverrides.append(domainoverride)
+                target[param] = domainoverrides
+              elif param == 'hosts':
+                hosts = []
+                for entry in params.get(param):
+                  host = dict()
+                  for subparam in DNS_RESOLVER_HOSTS_ARGUMENT_SPEC:
+                    if entry.get(subparam) is not None:
+                      host[subparam] = {}
+                      if DNS_RESOLVER_HOSTS_ARGUMENT_SPEC[subparam]['type'] == 'list':
+                        # this will break the config
+                        aliases = []
+                        for subentry in entry.get(subparam):
+                          alias = dict()
+                          for subsubparam in DNS_RESOLVER_HOSTS_ALIASES_ARGUMENT_SPEC:
+                            if isinstance(subentry[subsubparam], str):
+                              alias[subsubparam] = subentry[subsubparam]
+                            else:
+                              alias[subsubparam] = str(subentry[subsubparam])
+                          aliases.append(alias)
+                        # dict_to_element will generate multiple <aliases> elements, but pfsense wants <aliases> with multiple <item>-Elements
+                        host[subparam]['item'] = aliases
+                      else:
+                        if isinstance(entry[subparam], str):
+                          host[subparam] = entry[subparam]
+                        else:
+                          host[subparam] = str(entry[subparam])
+                  hosts.append(host)
+                target[param] = hosts
+
         for param in DNS_RESOLVER_ARGUMENT_SPEC:
-            if DNS_RESOLVER_ARGUMENT_SPEC[param]['type'] == 'bool':
+            if DNS_RESOLVER_ARGUMENT_SPEC[param]['type'] == 'list':
+                _set_param_list(obj, param)
+            elif DNS_RESOLVER_ARGUMENT_SPEC[param]['type'] == 'bool':
                 _set_param_bool(obj, param)
             else:
                 _set_param(obj, param)
