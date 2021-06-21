@@ -104,11 +104,11 @@ options:
     description: Use DN for username search (pfsense-CE >=2.5.0, pfsense-PLUS >=21.2)
     default: false
     type: bool
-  ldap_utf8:    
+  ldap_utf8:
     description: UTF8 encode LDAP parameters before sending them to the server.
     default: false
     type: bool
-  ldap_nostrip_at:    
+  ldap_nostrip_at:
     description: Do not strip away parts of the username after the @ symbol
     default: false
     type: bool
